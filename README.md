@@ -5,6 +5,37 @@ This project is meant to be a learning tool and a starting point for a real GitH
 
 ---
 
+## Installation
+
+### Windows (Recommended)
+
+Just run the setup script! It handles everything for you:
+
+**Option 1 (Best):** Double-click `setup.bat` or run it from Command Prompt:
+```cmd
+setup.bat
+```
+
+**Option 2:** Use PowerShell:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+.\install.ps1
+```
+
+### Requirements
+- **Go 1.22+** - Download from [golang.org](https://golang.org/dl/)
+- **Git** - Download from [git-scm.com](https://git-scm.com/download/win)
+
+After running the setup script, open a new terminal and you're ready to use `ghpm`!
+
+### Linux/macOS
+```bash
+go build -o ghpm
+sudo mv ghpm /usr/local/bin/
+```
+
+---
+
 ## Features
 
 - Install any public GitHub repository
