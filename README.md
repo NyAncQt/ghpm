@@ -1,86 +1,151 @@
 # GHPM - GitHub Package Manager (Prototype)
 
-GHPM is a simple CLI tool written in Go that allows you to install GitHub repositories directly to your local machine.  
-This project is meant to be a learning tool and a starting point for a real GitHub package manager.
+GHPM is a simple CLI tool written in Go that lets you install public GitHub repositories to your local machine. This repository is a prototype and learning project.
 
 ---
 
+**Quick summary:** `ghpm install owner/repo` clones into `~/.ghpm/packages/repo-name` and creates a JSON manifest in `~/.ghpm/manifests/`.
+
+**Repository status:** Prototype — minimal feature set, no sandboxing, and intended for local use only.
+
+---
+
+## Requirements
+
+- Go 1.22+ (for building from source)
+- Git (for cloning repositories)
+
+On Linux, you also need a writable install location (either `/usr/local/bin` or `~/.local/bin`).
+
 ## Installation
 
-### Windows (Recommended)
+### Using the bundled installer (Linux)
 
-Just run the setup script! It handles everything for you:
+An install script is included: `install.sh`.
 
-**Option 1 (Best):** Double-click `setup.bat` or run it from Command Prompt:
-```cmd
-setup.bat
+How it works:
+
+- Builds the `ghpm` binary with `go build`.
+- Installs to `/usr/local/bin` if writable, otherwise to `$HOME/.local/bin`.
+- If `$HOME/.local/bin` is used the script will attempt to add that directory to a sensible shell profile (for example `~/.zshrc`, `~/.bashrc` or `~/.profile`) so the command is available in new shells.
+- The script avoids `sudo` so it won't prompt for credentials; use `sudo` manually if you prefer installing to `/usr/local/bin`.
+
+Run the installer from the project root:
+
+```bash
+./install.sh
 ```
 
-**Option 2:** Use PowerShell:
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
-.\install.ps1
+If the script updated a profile file, open a new terminal or source the file, for example:
+
+```bash
+source ~/.zshrc
 ```
 
-### Requirements
-- **Go 1.22+** - Download from [golang.org](https://golang.org/dl/)
-- **Git** - Download from [git-scm.com](https://git-scm.com/download/win)
+### Manual build (Linux/macOS)
 
-After running the setup script, open a new terminal and you're ready to use `ghpm`!
-
-### Linux/macOS
 ```bash
 go build -o ghpm
 sudo mv ghpm /usr/local/bin/
 ```
 
+### Windows
+
+Use the included Windows setup scripts (`setup.bat` or `install.ps1`) as documented in the original project files.
+
 ---
 
-## Features
+## Features & Behavior
 
-- Install any public GitHub repository
-- List installed packages
-- Remove installed packages
-- Manifest tracking with JSON storage
+- Install any public GitHub repository by owner/repo.
+- If you provide only a repository name (for example `btop`), `ghpm` will perform a GitHub search and prompt you to pick one of the matching repositories.
+- Installs go into `~/.ghpm/packages/`.
+- Manifest JSON files are written to `~/.ghpm/manifests/` and include fields: `name`, `repo`, `url`, `installed_at`, and optional `commit` and `version`.
+- The tool creates `~/.ghpm`, `~/.ghpm/packages`, and `~/.ghpm/manifests` automatically.
+
+Note: This tool clones repositories (git). It does not build or install software contained inside the repo — it simply downloads the repository contents into a local folder.
 
 ---
 
 ## Usage
 
-### Commands
+**Install a repository (owner specified):**
 
-**Install a repository:**
 ```bash
 ghpm install owner/repo
 ```
-Example: `ghpm install golang/go`
 
-This will clone the repository to `~/.ghpm/packages/repo-name` and create a manifest file.
+Example:
+
+```bash
+ghpm install golang/go
+```
+
+**Install by name (search):**
+
+If you don't know the owner you can provide only the repository name and `ghpm` will search GitHub and prompt you to choose:
+
+```bash
+ghpm install btop
+```
+
+You can automate selection in scripts by piping a number into the command:
+
+```bash
+printf '1\n' | ghpm install btop
+```
 
 **List installed packages:**
+
 ```bash
 ghpm list
 ```
-Shows all installed packages with their repository names.
 
 **Remove a package:**
+
 ```bash
 ghpm remove repo-name
 ```
-Example: `ghpm remove go`
 
-Deletes the package from `~/.ghpm/packages/` and removes its manifest.
-
-### Package Location
-
-All packages are installed to: `~/.ghpm/packages/`
-
-Manifest files are stored at: `~/.ghpm/manifests/`
-
-### Example Workflow
+Example workflow:
 
 ```bash
-ghpm install kubernetes/kubernetes
+ghpm install aristocratos/btop
 ghpm list
-ghpm remove kubernetes
+ghpm remove btop
 ```
+
+---
+
+## Troubleshooting
+
+- If `ghpm` is not found after running `install.sh`, make sure the installer added `$HOME/.local/bin` to a shell profile and that profile has been sourced (or open a new terminal).
+- To add `$HOME/.local/bin` to your current session manually:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+- If `ghpm install <name>` prints `Invalid repo format. Use owner/repo`, use the search form instead (just the repo name) — recent versions will automatically search if you provide a name without an owner.
+
+---
+
+## Development
+
+Build locally:
+
+```bash
+go build -o ghpm
+```
+
+Run with `go run` for iterative development:
+
+```bash
+go run main.go list
+```
+
+---
+
+## License
+
+See `LICENSE` in this repository.
