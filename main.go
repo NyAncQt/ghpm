@@ -68,7 +68,13 @@ func main() {
 			fmt.Println("Usage: ghpm install owner/repo")
 			return
 		}
-		installRepo(os.Args[2])
+		repoArg := os.Args[2]
+		if strings.Contains(repoArg, "/") {
+			installRepo(repoArg)
+		} else {
+			// If user provided only a name (e.g. "btop"), search GitHub and prompt
+			searchAndPrompt(repoArg)
+		}
 	case "remove":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: ghpm remove repo-name")
