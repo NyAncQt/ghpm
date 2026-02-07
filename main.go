@@ -21,9 +21,9 @@ type Manifest struct {
 	InstalledAt time.Time `json:"installed_at"`
 	Commit      string    `json:"commit,omitempty"`
 	Version     string    `json:"version,omitempty"`
-	Language    string    `json:"language,omitempty"`  // NEW: detected language
-	Built       bool      `json:"built,omitempty"`     // NEW: build status
-	BuildCmd    string    `json:"build_cmd,omitempty"` // NEW: command used to build
+	Language    string    `json:"language,omitempty"`
+	Built       bool      `json:"built,omitempty"`
+	BuildCmd    string    `json:"build_cmd,omitempty"`
 }
 
 var baseDir, packagesDir, manifestsDir string
@@ -54,7 +54,7 @@ func initDirs() error {
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: ghpm <command> [args]")
-		fmt.Println("Commands: install, remove, list, search, update, info") // Added update, info
+		fmt.Println("Commands: install, remove, list, search, update, info")
 		return
 	}
 
@@ -92,13 +92,13 @@ func main() {
 			return
 		}
 		searchAndPrompt(os.Args[2])
-	case "update": // NEW COMMAND
+	case "update":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: ghpm update <repo-name>")
 			return
 		}
 		updateRepo(os.Args[2])
-	case "info": // NEW COMMAND
+	case "info":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: ghpm info <repo-name>")
 			return
@@ -203,7 +203,7 @@ func searchRepos(query string, perPage int) ([]ghRepoItem, error) {
 	return sr.Items, nil
 }
 
-// NEW FUNCTION: detectLanguage tries to auto-detect the programming language of a repo
+// detectLanguage tries to auto-detect the programming language of a repo
 func detectLanguage(repoPath string) string {
 	checks := []struct {
 		file string
@@ -240,10 +240,8 @@ func detectLanguage(repoPath string) string {
 	return "Unknown"
 }
 
-// NEW FUNCTION: autoBuildRepo attempts to build/install based on detected language
+// autoBuildRepo attempts to build/install based on detected language
 func autoBuildRepo(repoPath, language string) (bool, string) {
-	fmt.Println("Detected language:", language)
-
 	// Check for --no-build flag
 	for _, arg := range os.Args {
 		if arg == "--no-build" {
@@ -252,6 +250,13 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 		}
 	}
 
+	if language == "Unknown" {
+		fmt.Println("Could not detect language - skipping auto-build")
+		fmt.Println("You may need to build/install manually. Check the repo's README.")
+		return false, "unknown language"
+	}
+
+	fmt.Println("Detected language:", language)
 	fmt.Println("Attempting auto-build/install...")
 
 	var cmd *exec.Cmd
@@ -274,9 +279,11 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
+				fmt.Println("Build failed. You may need to build manually.")
 				return false, cmdDesc
 			}
 		}
+		fmt.Println("Build successful!")
 		return true, cmdDesc
 
 	case "Rust":
@@ -295,9 +302,11 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
+				fmt.Println("Build failed. You may need to build manually.")
 				return false, cmdDesc
 			}
 		}
+		fmt.Println("Build successful!")
 		return true, cmdDesc
 
 	case "Node":
@@ -307,8 +316,11 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
+			fmt.Println("npm install failed. You may need to install manually.")
 			return false, cmdDesc
 		}
+		fmt.Println("Dependencies installed!")
+		fmt.Println("Note: This is a Node project. Check package.json for run commands.")
 		return true, cmdDesc
 
 	case "Python":
@@ -327,9 +339,11 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
+				fmt.Println("Install failed. You may need to install manually.")
 				return false, cmdDesc
 			}
 		}
+		fmt.Println("Build successful!")
 		return true, cmdDesc
 
 	case "Shell":
@@ -343,6 +357,7 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 			}
 		}
 		if installScript == "" {
+			fmt.Println("No install.sh found. Check the README for manual installation.")
 			return false, "no install.sh found"
 		}
 
@@ -350,36 +365,47 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 
 		// Make executable
 		if err := os.Chmod(scriptPath, 0755); err != nil {
+			fmt.Println("Failed to make install script executable")
 			return false, "chmod +x " + installScript
 		}
 
 		cmdDesc = "./" + installScript
+		fmt.Println("Running", cmdDesc, "...")
 		cmd = exec.Command("sh", scriptPath)
 		cmd.Dir = repoPath
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
+			fmt.Println("Install script failed. Check the README for manual installation.")
 			return false, cmdDesc
 		}
+		fmt.Println("Install script completed!")
 		return true, cmdDesc
 
 	case "C/C++":
 		// Try make first
 		cmdDesc = "make"
 		if _, err := os.Stat(filepath.Join(repoPath, "Makefile")); err == nil {
+			fmt.Println("Running make...")
 			cmd = exec.Command("make")
 			cmd.Dir = repoPath
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
+				fmt.Println("make failed. You may need to build manually.")
 				return false, cmdDesc
 			}
 			// Try make install (don't fail if it doesn't work)
+			fmt.Println("Running make install...")
 			cmdInstall := exec.Command("make", "install")
 			cmdInstall.Dir = repoPath
 			cmdInstall.Stdout = os.Stdout
 			cmdInstall.Stderr = os.Stderr
-			cmdInstall.Run()
+			if err := cmdInstall.Run(); err != nil {
+				fmt.Println("make install failed (this is sometimes expected)")
+				fmt.Println("Binary may be in:", repoPath)
+			}
+			fmt.Println("Build successful!")
 			return true, cmdDesc + " && make install"
 		}
 
@@ -389,27 +415,34 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 			os.MkdirAll(buildDir, 0755)
 
 			cmdDesc = "cmake && make"
+			fmt.Println("Running cmake...")
 			cmd = exec.Command("cmake", "..")
 			cmd.Dir = buildDir
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
+				fmt.Println("cmake failed. You may need to build manually.")
 				return false, cmdDesc
 			}
 
+			fmt.Println("Running make...")
 			cmd = exec.Command("make")
 			cmd.Dir = buildDir
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
+				fmt.Println("make failed. You may need to build manually.")
 				return false, cmdDesc
 			}
+			fmt.Println("Build successful!")
 			return true, cmdDesc
 		}
 
-		return false, "no Makefile or CMakeLists.txt found"
+		fmt.Println("No Makefile or CMakeLists.txt found. Check README for build instructions.")
+		return false, "no build system found"
 
 	default:
+		fmt.Println("Unsupported language for auto-build")
 		return false, "unsupported language"
 	}
 }
@@ -438,34 +471,25 @@ func installRepo(repo string) {
 		return
 	}
 
-	// NEW: Detect language and auto-build
+	// Detect language and auto-build
 	language := detectLanguage(dest)
-	built := false
-	buildCmd := ""
-
-	if language != "Unknown" {
-		success, cmd := autoBuildRepo(dest, language)
-		built = success
-		buildCmd = cmd
-		if success {
-			fmt.Println("Build successful!")
-		} else {
-			fmt.Println("Build failed:", cmd)
-			fmt.Println("Package installed but not built. You may need to build manually.")
-		}
-	}
+	built, buildCmd := autoBuildRepo(dest, language)
 
 	manifest := Manifest{
 		Name:        repoName,
 		Repo:        repo,
 		URL:         url,
 		InstalledAt: time.Now(),
-		Language:    language, // NEW
-		Built:       built,    // NEW
-		BuildCmd:    buildCmd, // NEW
+		Language:    language,
+		Built:       built,
+		BuildCmd:    buildCmd,
 	}
 	saveManifest(manifest)
+
 	fmt.Println("Installed", repoName)
+	if !built && language != "Unknown" {
+		fmt.Println("Package cloned but not built. Check", dest, "for manual build instructions.")
+	}
 }
 
 func removeRepo(name string) {
@@ -505,13 +529,15 @@ func listRepos() {
 			extra = fmt.Sprintf(" [%s]", m.Language)
 			if m.Built {
 				extra += " ✓"
+			} else {
+				extra += " ✗"
 			}
 		}
 		fmt.Printf("- %s (%s)%s\n", m.Name, m.Repo, extra)
 	}
 }
 
-// NEW FUNCTION: updateRepo pulls latest changes and rebuilds
+// updateRepo pulls latest changes and rebuilds
 func updateRepo(name string) {
 	manifestPath := filepath.Join(manifestsDir, name+".json")
 	pkgPath := filepath.Join(packagesDir, name)
@@ -553,11 +579,6 @@ func updateRepo(name string) {
 		success, buildCmd := autoBuildRepo(pkgPath, m.Language)
 		m.Built = success
 		m.BuildCmd = buildCmd
-		if success {
-			fmt.Println("Rebuild successful!")
-		} else {
-			fmt.Println("Rebuild failed:", buildCmd)
-		}
 	}
 
 	m.InstalledAt = time.Now()
@@ -565,7 +586,7 @@ func updateRepo(name string) {
 	fmt.Println("Updated", name)
 }
 
-// NEW FUNCTION: showInfo displays detailed package information
+// showInfo displays detailed package information
 func showInfo(name string) {
 	manifestPath := filepath.Join(manifestsDir, name+".json")
 
