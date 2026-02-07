@@ -21,6 +21,9 @@ type Manifest struct {
 	InstalledAt time.Time `json:"installed_at"`
 	Commit      string    `json:"commit,omitempty"`
 	Version     string    `json:"version,omitempty"`
+	Language    string    `json:"language,omitempty"`  // NEW: detected language
+	Built       bool      `json:"built,omitempty"`     // NEW: build status
+	BuildCmd    string    `json:"build_cmd,omitempty"` // NEW: command used to build
 }
 
 var baseDir, packagesDir, manifestsDir string
@@ -51,7 +54,7 @@ func initDirs() error {
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: ghpm <command> [args]")
-		fmt.Println("Commands: install, remove, list, search")
+		fmt.Println("Commands: install, remove, list, search, update, info") // Added update, info
 		return
 	}
 
@@ -89,6 +92,18 @@ func main() {
 			return
 		}
 		searchAndPrompt(os.Args[2])
+	case "update": // NEW COMMAND
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: ghpm update <repo-name>")
+			return
+		}
+		updateRepo(os.Args[2])
+	case "info": // NEW COMMAND
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: ghpm info <repo-name>")
+			return
+		}
+		showInfo(os.Args[2])
 	default:
 		fmt.Println("Unknown command:", command)
 	}
@@ -188,6 +203,217 @@ func searchRepos(query string, perPage int) ([]ghRepoItem, error) {
 	return sr.Items, nil
 }
 
+// NEW FUNCTION: detectLanguage tries to auto-detect the programming language of a repo
+func detectLanguage(repoPath string) string {
+	checks := []struct {
+		file string
+		lang string
+	}{
+		{"go.mod", "Go"},
+		{"Cargo.toml", "Rust"},
+		{"package.json", "Node"},
+		{"setup.py", "Python"},
+		{"pyproject.toml", "Python"},
+		{"requirements.txt", "Python"},
+		{"Makefile", "C/C++"},
+		{"CMakeLists.txt", "C/C++"},
+	}
+
+	for _, check := range checks {
+		if _, err := os.Stat(filepath.Join(repoPath, check.file)); err == nil {
+			return check.lang
+		}
+	}
+
+	// Check for shell scripts
+	entries, err := os.ReadDir(repoPath)
+	if err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".sh") {
+				if strings.Contains(strings.ToLower(e.Name()), "install") {
+					return "Shell"
+				}
+			}
+		}
+	}
+
+	return "Unknown"
+}
+
+// NEW FUNCTION: autoBuildRepo attempts to build/install based on detected language
+func autoBuildRepo(repoPath, language string) (bool, string) {
+	fmt.Println("Detected language:", language)
+
+	// Check for --no-build flag
+	for _, arg := range os.Args {
+		if arg == "--no-build" {
+			fmt.Println("Skipping build (--no-build flag)")
+			return false, "skipped"
+		}
+	}
+
+	fmt.Println("Attempting auto-build/install...")
+
+	var cmd *exec.Cmd
+	var cmdDesc string
+
+	switch language {
+	case "Go":
+		// Try go install first
+		cmdDesc = "go install"
+		cmd = exec.Command("go", "install")
+		cmd.Dir = repoPath
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			// Fallback to go build
+			fmt.Println("go install failed, trying go build...")
+			cmdDesc = "go build"
+			cmd = exec.Command("go", "build")
+			cmd.Dir = repoPath
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return false, cmdDesc
+			}
+		}
+		return true, cmdDesc
+
+	case "Rust":
+		// Try cargo install --path first
+		cmdDesc = "cargo install --path ."
+		cmd = exec.Command("cargo", "install", "--path", ".")
+		cmd.Dir = repoPath
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			// Fallback to cargo build
+			fmt.Println("cargo install failed, trying cargo build...")
+			cmdDesc = "cargo build --release"
+			cmd = exec.Command("cargo", "build", "--release")
+			cmd.Dir = repoPath
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return false, cmdDesc
+			}
+		}
+		return true, cmdDesc
+
+	case "Node":
+		cmdDesc = "npm install"
+		cmd = exec.Command("npm", "install")
+		cmd.Dir = repoPath
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return false, cmdDesc
+		}
+		return true, cmdDesc
+
+	case "Python":
+		// Try pip install . first
+		cmdDesc = "pip install ."
+		cmd = exec.Command("pip", "install", ".")
+		cmd.Dir = repoPath
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			// Fallback to setup.py
+			fmt.Println("pip install failed, trying setup.py...")
+			cmdDesc = "python setup.py install"
+			cmd = exec.Command("python", "setup.py", "install")
+			cmd.Dir = repoPath
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return false, cmdDesc
+			}
+		}
+		return true, cmdDesc
+
+	case "Shell":
+		// Find install script
+		installScript := ""
+		entries, _ := os.ReadDir(repoPath)
+		for _, e := range entries {
+			if strings.Contains(strings.ToLower(e.Name()), "install") && strings.HasSuffix(e.Name(), ".sh") {
+				installScript = e.Name()
+				break
+			}
+		}
+		if installScript == "" {
+			return false, "no install.sh found"
+		}
+
+		scriptPath := filepath.Join(repoPath, installScript)
+
+		// Make executable
+		if err := os.Chmod(scriptPath, 0755); err != nil {
+			return false, "chmod +x " + installScript
+		}
+
+		cmdDesc = "./" + installScript
+		cmd = exec.Command("sh", scriptPath)
+		cmd.Dir = repoPath
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return false, cmdDesc
+		}
+		return true, cmdDesc
+
+	case "C/C++":
+		// Try make first
+		cmdDesc = "make"
+		if _, err := os.Stat(filepath.Join(repoPath, "Makefile")); err == nil {
+			cmd = exec.Command("make")
+			cmd.Dir = repoPath
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return false, cmdDesc
+			}
+			// Try make install (don't fail if it doesn't work)
+			cmdInstall := exec.Command("make", "install")
+			cmdInstall.Dir = repoPath
+			cmdInstall.Stdout = os.Stdout
+			cmdInstall.Stderr = os.Stderr
+			cmdInstall.Run()
+			return true, cmdDesc + " && make install"
+		}
+
+		// Try CMake
+		if _, err := os.Stat(filepath.Join(repoPath, "CMakeLists.txt")); err == nil {
+			buildDir := filepath.Join(repoPath, "build")
+			os.MkdirAll(buildDir, 0755)
+
+			cmdDesc = "cmake && make"
+			cmd = exec.Command("cmake", "..")
+			cmd.Dir = buildDir
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return false, cmdDesc
+			}
+
+			cmd = exec.Command("make")
+			cmd.Dir = buildDir
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return false, cmdDesc
+			}
+			return true, cmdDesc
+		}
+
+		return false, "no Makefile or CMakeLists.txt found"
+
+	default:
+		return false, "unsupported language"
+	}
+}
+
 func installRepo(repo string) {
 	if !strings.Contains(repo, "/") {
 		fmt.Println("Invalid repo format. Use owner/repo")
@@ -212,11 +438,31 @@ func installRepo(repo string) {
 		return
 	}
 
+	// NEW: Detect language and auto-build
+	language := detectLanguage(dest)
+	built := false
+	buildCmd := ""
+
+	if language != "Unknown" {
+		success, cmd := autoBuildRepo(dest, language)
+		built = success
+		buildCmd = cmd
+		if success {
+			fmt.Println("Build successful!")
+		} else {
+			fmt.Println("Build failed:", cmd)
+			fmt.Println("Package installed but not built. You may need to build manually.")
+		}
+	}
+
 	manifest := Manifest{
 		Name:        repoName,
 		Repo:        repo,
 		URL:         url,
 		InstalledAt: time.Now(),
+		Language:    language, // NEW
+		Built:       built,    // NEW
+		BuildCmd:    buildCmd, // NEW
 	}
 	saveManifest(manifest)
 	fmt.Println("Installed", repoName)
@@ -253,7 +499,102 @@ func listRepos() {
 		var m Manifest
 		data, _ := os.ReadFile(filepath.Join(manifestsDir, f.Name()))
 		json.Unmarshal(data, &m)
-		fmt.Printf("- %s (%s)\n", m.Name, m.Repo)
+		// Show language and build status if available
+		extra := ""
+		if m.Language != "" && m.Language != "Unknown" {
+			extra = fmt.Sprintf(" [%s]", m.Language)
+			if m.Built {
+				extra += " ✓"
+			}
+		}
+		fmt.Printf("- %s (%s)%s\n", m.Name, m.Repo, extra)
+	}
+}
+
+// NEW FUNCTION: updateRepo pulls latest changes and rebuilds
+func updateRepo(name string) {
+	manifestPath := filepath.Join(manifestsDir, name+".json")
+	pkgPath := filepath.Join(packagesDir, name)
+
+	// Check if installed
+	if _, err := os.Stat(pkgPath); os.IsNotExist(err) {
+		fmt.Println("Package not installed:", name)
+		return
+	}
+
+	// Load manifest
+	var m Manifest
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		fmt.Println("Failed to read manifest:", err)
+		return
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		fmt.Println("Failed to parse manifest:", err)
+		return
+	}
+
+	fmt.Println("Updating", name, "...")
+
+	// Git pull
+	cmd := exec.Command("git", "pull")
+	cmd.Dir = pkgPath
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Println("Git pull failed:", err)
+		return
+	}
+
+	// Re-detect language and rebuild if it was built before
+	m.Language = detectLanguage(pkgPath)
+	if m.Built && m.Language != "Unknown" {
+		fmt.Println("Rebuilding...")
+		success, buildCmd := autoBuildRepo(pkgPath, m.Language)
+		m.Built = success
+		m.BuildCmd = buildCmd
+		if success {
+			fmt.Println("Rebuild successful!")
+		} else {
+			fmt.Println("Rebuild failed:", buildCmd)
+		}
+	}
+
+	m.InstalledAt = time.Now()
+	saveManifest(m)
+	fmt.Println("Updated", name)
+}
+
+// NEW FUNCTION: showInfo displays detailed package information
+func showInfo(name string) {
+	manifestPath := filepath.Join(manifestsDir, name+".json")
+
+	var m Manifest
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		fmt.Println("Package not found:", name)
+		return
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		fmt.Println("Failed to parse manifest:", err)
+		return
+	}
+
+	fmt.Println("Package:", m.Name)
+	fmt.Println("Repository:", m.Repo)
+	fmt.Println("URL:", m.URL)
+	if m.Language != "" {
+		fmt.Println("Language:", m.Language)
+	}
+	fmt.Println("Built:", m.Built)
+	if m.BuildCmd != "" {
+		fmt.Println("Build Command:", m.BuildCmd)
+	}
+	fmt.Println("Installed:", m.InstalledAt.Format("2006-01-02 15:04:05"))
+
+	pkgPath := filepath.Join(packagesDir, name)
+	if _, err := os.Stat(pkgPath); err == nil {
+		fmt.Println("Location:", pkgPath)
 	}
 }
 
