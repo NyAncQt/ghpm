@@ -32,9 +32,28 @@ chmod +x "$TARGET/ghpm"
 echo "Installed ghpm -> $TARGET/ghpm"
 
 if [[ ":$PATH:" != *":$TARGET:"* ]]; then
-  echo "Warning: $TARGET is not in your PATH."
-  echo "Add this to your shell profile, for example:"
-  echo "  export PATH=\"$HOME/.local/bin:\$PATH\""
+  # Determine a sensible profile to modify
+  profile="$HOME/.profile"
+  if [ -n "${SHELL:-}" ] && [[ "$SHELL" == */zsh ]]; then
+    profile="$HOME/.zshrc"
+  elif [ -n "${SHELL:-}" ] && [[ "$SHELL" == */bash ]]; then
+    if [ -f "$HOME/.bash_profile" ]; then
+      profile="$HOME/.bash_profile"
+    else
+      profile="$HOME/.bashrc"
+    fi
+  fi
+
+  line="export PATH=\"$TARGET:\$PATH\""
+  # Create profile if it doesn't exist and append the line if missing
+  touch "$profile"
+  if ! grep -Fqx "$line" "$profile" 2>/dev/null; then
+    printf "\n# Added by ghpm install.sh\n%s\n" "$line" >> "$profile"
+    echo "Added $TARGET to PATH in $profile"
+    echo "You may need to run: source $profile"
+  else
+    echo "$TARGET already present in $profile"
+  fi
 fi
 
 echo "Done. Run 'ghpm' to verify." 
