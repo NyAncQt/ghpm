@@ -34,7 +34,18 @@ func initDirs() error {
 	packagesDir = filepath.Join(baseDir, "packages")
 	manifestsDir = filepath.Join(baseDir, "manifests")
 
-	return os.MkdirAll(manifestsDir, 0755)
+	// Ensure base, packages and manifests directories exist
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(packagesDir, 0755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(manifestsDir, 0755); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func main() {
