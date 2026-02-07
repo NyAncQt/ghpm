@@ -215,6 +215,7 @@ func detectLanguage(repoPath string) string {
 		{"setup.py", "Python"},
 		{"pyproject.toml", "Python"},
 		{"requirements.txt", "Python"},
+		{"Gemfile", "Ruby"},
 		{"Makefile", "C/C++"},
 		{"CMakeLists.txt", "C/C++"},
 	}
@@ -237,7 +238,71 @@ func detectLanguage(repoPath string) string {
 		}
 	}
 
+	// Check for Ruby gemspec
+	if matches, _ := filepath.Glob(filepath.Join(repoPath, "*.gemspec")); len(matches) > 0 {
+		return "Ruby"
+	}
+
 	return "Unknown"
+}
+
+type binLink struct {
+	Name string
+	Path string
+}
+
+func packageJSONBinLinks(repoPath string) []binLink {
+	data, err := os.ReadFile(filepath.Join(repoPath, "package.json"))
+	if err != nil {
+		return nil
+	}
+	var raw struct {
+		Name string          `json:"name"`
+		Bin  json.RawMessage `json:"bin"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+	if len(raw.Bin) == 0 {
+		return nil
+	}
+
+	var links []binLink
+	if len(raw.Bin) > 0 && raw.Bin[0] == '"' {
+		var rel string
+		if err := json.Unmarshal(raw.Bin, &rel); err == nil && raw.Name != "" {
+			name := filepath.Base(raw.Name)
+			links = append(links, binLink{Name: name, Path: filepath.Join(repoPath, rel)})
+		}
+	} else if len(raw.Bin) > 0 && raw.Bin[0] == '{' {
+		var m map[string]string
+		if err := json.Unmarshal(raw.Bin, &m); err == nil {
+			for name, rel := range m {
+				links = append(links, binLink{Name: name, Path: filepath.Join(repoPath, rel)})
+			}
+		}
+	}
+
+	return links
+}
+
+func commandExists(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func warnIfPathMissing(binDir string) {
+	path := os.Getenv("PATH")
+	if path == "" {
+		fmt.Println("Warning: PATH is empty; you may not be able to run linked binaries.")
+		return
+	}
+	for _, p := range strings.Split(path, ":") {
+		if p == binDir {
+			return
+		}
+	}
+	fmt.Println("Warning:", binDir, "is not on your PATH. Add it to ~/.zshrc or ~/.bashrc.")
 }
 
 // autoBuildRepo attempts to build/install based on detected language
@@ -264,6 +329,10 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 
 	switch language {
 	case "Go":
+		if !commandExists("go") {
+			fmt.Println("Go is not installed or not on PATH.")
+			return false, "missing go"
+		}
 		// Try go install first
 		cmdDesc = "go install"
 		cmd = exec.Command("go", "install")
@@ -287,6 +356,10 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 		return true, cmdDesc
 
 	case "Rust":
+		if !commandExists("cargo") {
+			fmt.Println("Rust (cargo) is not installed or not on PATH.")
+			return false, "missing cargo"
+		}
 		// Try cargo install --path first
 		cmdDesc = "cargo install --path ."
 		cmd = exec.Command("cargo", "install", "--path", ".")
@@ -310,6 +383,10 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 		return true, cmdDesc
 
 	case "Node":
+		if !commandExists("npm") {
+			fmt.Println("Node (npm) is not installed or not on PATH.")
+			return false, "missing npm"
+		}
 		cmdDesc = "npm install"
 		cmd = exec.Command("npm", "install")
 		cmd.Dir = repoPath
@@ -324,29 +401,65 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 		return true, cmdDesc
 
 	case "Python":
-		// Try pip install . first
-		cmdDesc = "pip install ."
-		cmd = exec.Command("pip", "install", ".")
-		cmd.Dir = repoPath
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			// Fallback to setup.py
-			fmt.Println("pip install failed, trying setup.py...")
-			cmdDesc = "python setup.py install"
-			cmd = exec.Command("python", "setup.py", "install")
+		if !commandExists("pip") && !commandExists("python") {
+			fmt.Println("Python is not installed or not on PATH.")
+			return false, "missing python/pip"
+		}
+		if commandExists("pip") {
+			// Try pip install . first
+			cmdDesc = "pip install ."
+			cmd = exec.Command("pip", "install", ".")
 			cmd.Dir = repoPath
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
-				fmt.Println("Install failed. You may need to install manually.")
-				return false, cmdDesc
+				// Fallback to setup.py
+				fmt.Println("pip install failed, trying setup.py...")
+				if !commandExists("python") {
+					fmt.Println("python is not installed or not on PATH.")
+					return false, "missing python"
+				}
+				cmdDesc = "python setup.py install"
+				cmd = exec.Command("python", "setup.py", "install")
+				cmd.Dir = repoPath
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					fmt.Println("Install failed. You may need to install manually.")
+					return false, cmdDesc
+				}
 			}
+			fmt.Println("Build successful!")
+			return true, cmdDesc
+		}
+
+		// pip missing, try setup.py
+		cmdDesc = "python setup.py install"
+		cmd = exec.Command("python", "setup.py", "install")
+		cmd.Dir = repoPath
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Println("Install failed. You may need to install manually.")
+			return false, cmdDesc
 		}
 		fmt.Println("Build successful!")
 		return true, cmdDesc
 
+	case "Ruby":
+		// Ruby projects often provide bin/ scripts; no build needed to link them
+		if !commandExists("ruby") {
+			fmt.Println("Ruby is not installed or not on PATH.")
+			return false, "missing ruby"
+		}
+		fmt.Println("Ruby project detected. Skipping auto-build; will link bin scripts if present.")
+		return false, "ruby: no build required"
+
 	case "Shell":
+		if !commandExists("sh") {
+			fmt.Println("sh is not available on PATH.")
+			return false, "missing sh"
+		}
 		// Find install script
 		installScript := ""
 		entries, _ := os.ReadDir(repoPath)
@@ -383,59 +496,72 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 		return true, cmdDesc
 
 	case "C/C++":
+		hasMake := commandExists("make")
+		hasCmake := commandExists("cmake")
+		if !hasMake && !hasCmake {
+			fmt.Println("Neither make nor cmake is available on PATH.")
+			return false, "missing make/cmake"
+		}
+
 		// Try make first
 		cmdDesc = "make"
-		if _, err := os.Stat(filepath.Join(repoPath, "Makefile")); err == nil {
-			fmt.Println("Running make...")
-			cmd = exec.Command("make")
-			cmd.Dir = repoPath
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				fmt.Println("make failed. You may need to build manually.")
-				return false, cmdDesc
+		if hasMake {
+			_, err := os.Stat(filepath.Join(repoPath, "Makefile"))
+			if err == nil {
+				fmt.Println("Running make...")
+				cmd = exec.Command("make")
+				cmd.Dir = repoPath
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					fmt.Println("make failed. You may need to build manually.")
+					return false, cmdDesc
+				}
+				// Try make install (don't fail if it doesn't work)
+				fmt.Println("Running make install...")
+				cmdInstall := exec.Command("make", "install")
+				cmdInstall.Dir = repoPath
+				cmdInstall.Stdout = os.Stdout
+				cmdInstall.Stderr = os.Stderr
+				if err := cmdInstall.Run(); err != nil {
+					fmt.Println("make install failed (this is sometimes expected)")
+					fmt.Println("Binary may be in:", repoPath)
+				}
+				fmt.Println("Build successful!")
+				return true, cmdDesc + " && make install"
 			}
-			// Try make install (don't fail if it doesn't work)
-			fmt.Println("Running make install...")
-			cmdInstall := exec.Command("make", "install")
-			cmdInstall.Dir = repoPath
-			cmdInstall.Stdout = os.Stdout
-			cmdInstall.Stderr = os.Stderr
-			if err := cmdInstall.Run(); err != nil {
-				fmt.Println("make install failed (this is sometimes expected)")
-				fmt.Println("Binary may be in:", repoPath)
-			}
-			fmt.Println("Build successful!")
-			return true, cmdDesc + " && make install"
 		}
 
 		// Try CMake
-		if _, err := os.Stat(filepath.Join(repoPath, "CMakeLists.txt")); err == nil {
-			buildDir := filepath.Join(repoPath, "build")
-			os.MkdirAll(buildDir, 0755)
+		if hasCmake {
+			_, err := os.Stat(filepath.Join(repoPath, "CMakeLists.txt"))
+			if err == nil {
+				buildDir := filepath.Join(repoPath, "build")
+				os.MkdirAll(buildDir, 0755)
 
-			cmdDesc = "cmake && make"
-			fmt.Println("Running cmake...")
-			cmd = exec.Command("cmake", "..")
-			cmd.Dir = buildDir
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				fmt.Println("cmake failed. You may need to build manually.")
-				return false, cmdDesc
-			}
+				cmdDesc = "cmake && make"
+				fmt.Println("Running cmake...")
+				cmd = exec.Command("cmake", "..")
+				cmd.Dir = buildDir
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					fmt.Println("cmake failed. You may need to build manually.")
+					return false, cmdDesc
+				}
 
-			fmt.Println("Running make...")
-			cmd = exec.Command("make")
-			cmd.Dir = buildDir
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				fmt.Println("make failed. You may need to build manually.")
-				return false, cmdDesc
+				fmt.Println("Running make...")
+				cmd = exec.Command("make")
+				cmd.Dir = buildDir
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					fmt.Println("make failed. You may need to build manually.")
+					return false, cmdDesc
+				}
+				fmt.Println("Build successful!")
+				return true, cmdDesc
 			}
-			fmt.Println("Build successful!")
-			return true, cmdDesc
 		}
 
 		fmt.Println("No Makefile or CMakeLists.txt found. Check README for build instructions.")
@@ -475,6 +601,7 @@ func installRepo(repo string) {
 	language := detectLanguage(dest)
 	built, buildCmd := autoBuildRepo(dest, language)
 
+	// Save manifest
 	manifest := Manifest{
 		Name:        repoName,
 		Repo:        repo,
@@ -486,9 +613,218 @@ func installRepo(repo string) {
 	}
 	saveManifest(manifest)
 
+	// LINK BINARIES HERE
+	linkBinaries(dest, repoName, language)
+
 	fmt.Println("Installed", repoName)
 	if !built && language != "Unknown" {
 		fmt.Println("Package cloned but not built. Check", dest, "for manual build instructions.")
+	}
+}
+
+func linkBinaries(repoPath, repoName, language string) {
+	// Where to link binaries
+	binDir := filepath.Join(os.Getenv("HOME"), ".local", "bin")
+	os.MkdirAll(binDir, 0755)
+	warnIfPathMissing(binDir)
+
+	var binaries []string
+	isExecutable := func(path string) bool {
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			return false
+		}
+		return info.Mode()&0111 != 0
+	}
+
+	switch language {
+	case "Go":
+		// Usually go install puts binaries in $GOPATH/bin, fallback to repoPath
+		gobin := os.Getenv("GOBIN")
+		if gobin == "" {
+			gobin = filepath.Join(os.Getenv("HOME"), "go", "bin")
+		}
+		binPath := filepath.Join(gobin, repoName)
+		if _, err := os.Stat(binPath); err == nil {
+			binaries = append(binaries, binPath)
+		} else {
+			// fallback to built binary in repo
+			binPath = filepath.Join(repoPath, repoName)
+			if _, err := os.Stat(binPath); err == nil {
+				binaries = append(binaries, binPath)
+			}
+		}
+
+	case "Rust":
+		// Cargo puts release binaries in target/release
+		binPath := filepath.Join(repoPath, "target", "release", repoName)
+		if _, err := os.Stat(binPath); err == nil {
+			binaries = append(binaries, binPath)
+		}
+
+	case "Node":
+		// Respect package.json bin entries
+		for _, link := range packageJSONBinLinks(repoPath) {
+			if _, err := os.Stat(link.Path); err == nil {
+				os.Chmod(link.Path, 0755)
+				binaries = append(binaries, link.Path)
+			}
+		}
+
+		// Fallback: look for scripts in repo root and bin/
+		entries, _ := os.ReadDir(repoPath)
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if name == repoName || strings.Contains(strings.ToLower(name), "install") || strings.HasSuffix(name, ".js") {
+				binPath := filepath.Join(repoPath, name)
+				os.Chmod(binPath, 0755)
+				binaries = append(binaries, binPath)
+			}
+		}
+		binEntries, _ := os.ReadDir(filepath.Join(repoPath, "bin"))
+		for _, e := range binEntries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if name == repoName || strings.Contains(strings.ToLower(name), "install") || strings.HasSuffix(name, ".js") {
+				binPath := filepath.Join(repoPath, "bin", name)
+				os.Chmod(binPath, 0755)
+				binaries = append(binaries, binPath)
+			}
+		}
+
+	case "Python":
+		// Look for scripts with the repo name or "install" in repo
+		entries, _ := os.ReadDir(repoPath)
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if name == repoName || strings.Contains(strings.ToLower(name), "install") || strings.HasSuffix(name, ".py") || strings.HasSuffix(name, ".js") || strings.HasSuffix(name, ".sh") {
+				binPath := filepath.Join(repoPath, name)
+				os.Chmod(binPath, 0755)
+				binaries = append(binaries, binPath)
+			}
+		}
+
+		// Also check bin/ for scripts
+		binEntries, _ := os.ReadDir(filepath.Join(repoPath, "bin"))
+		for _, e := range binEntries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if name == repoName || strings.Contains(strings.ToLower(name), "install") || strings.HasSuffix(name, ".py") || strings.HasSuffix(name, ".js") || strings.HasSuffix(name, ".sh") {
+				binPath := filepath.Join(repoPath, "bin", name)
+				os.Chmod(binPath, 0755)
+				binaries = append(binaries, binPath)
+			}
+		}
+
+	case "Shell":
+		// Look for scripts with the repo name or "install" in repo
+		entries, _ := os.ReadDir(repoPath)
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if name == repoName || strings.Contains(strings.ToLower(name), "install") || strings.HasSuffix(name, ".sh") {
+				binPath := filepath.Join(repoPath, name)
+				os.Chmod(binPath, 0755)
+				binaries = append(binaries, binPath)
+			}
+		}
+
+		// Also check bin/ for scripts
+		binEntries, _ := os.ReadDir(filepath.Join(repoPath, "bin"))
+		for _, e := range binEntries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if name == repoName || strings.Contains(strings.ToLower(name), "install") || strings.HasSuffix(name, ".sh") {
+				binPath := filepath.Join(repoPath, "bin", name)
+				os.Chmod(binPath, 0755)
+				binaries = append(binaries, binPath)
+			}
+		}
+
+	case "Ruby":
+		// Commonly provides bin/ scripts (e.g., bin/<name>)
+		binPath := filepath.Join(repoPath, "bin", repoName)
+		if _, err := os.Stat(binPath); err == nil {
+			os.Chmod(binPath, 0755)
+			binaries = append(binaries, binPath)
+		} else {
+			// Fallback: link any executable files in bin/
+			binEntries, _ := os.ReadDir(filepath.Join(repoPath, "bin"))
+			for _, e := range binEntries {
+				if e.IsDir() {
+					continue
+				}
+				full := filepath.Join(repoPath, "bin", e.Name())
+				os.Chmod(full, 0755)
+				binaries = append(binaries, full)
+			}
+		}
+
+	case "C/C++":
+		// Prefer common build outputs first
+		candidates := []string{
+			filepath.Join(repoPath, repoName),
+			filepath.Join(repoPath, "bin", repoName),
+			filepath.Join(repoPath, "build", repoName),
+		}
+		for _, c := range candidates {
+			if isExecutable(c) {
+				binaries = append(binaries, c)
+				break
+			}
+		}
+
+		// Fallback: scan a few common dirs for executables
+		if len(binaries) == 0 {
+			scanDirs := []string{
+				repoPath,
+				filepath.Join(repoPath, "bin"),
+				filepath.Join(repoPath, "build"),
+			}
+			for _, dir := range scanDirs {
+				entries, _ := os.ReadDir(dir)
+				for _, e := range entries {
+					if e.IsDir() {
+						continue
+					}
+					full := filepath.Join(dir, e.Name())
+					if isExecutable(full) {
+						binaries = append(binaries, full)
+					}
+				}
+			}
+		}
+	}
+
+	// Link binaries to ~/.local/bin
+	for _, b := range binaries {
+		linkPath := filepath.Join(binDir, filepath.Base(b))
+		// Remove existing link if present
+		os.Remove(linkPath)
+		err := os.Symlink(b, linkPath)
+		if err != nil {
+			fmt.Println("Failed to link binary", b, ":", err)
+			continue
+		}
+		fmt.Println("Linked", filepath.Base(b), "to", binDir)
+	}
+
+	if len(binaries) == 0 {
+		fmt.Println("No binaries found to link for", repoName)
 	}
 }
 
