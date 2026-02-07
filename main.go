@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -36,7 +40,7 @@ func initDirs() error {
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: ghpm <command> [args]")
-		fmt.Println("Commands: install, remove, list, update")
+		fmt.Println("Commands: install, remove, list, search")
 		return
 	}
 
@@ -62,9 +66,109 @@ func main() {
 		removeRepo(os.Args[2])
 	case "list":
 		listRepos()
+	case "search":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: ghpm search <query>")
+			return
+		}
+		searchAndPrompt(os.Args[2])
 	default:
 		fmt.Println("Unknown command:", command)
 	}
+}
+
+// GitHub API structs
+type ghSearchResult struct {
+	TotalCount int          `json:"total_count"`
+	Items      []ghRepoItem `json:"items"`
+}
+
+type ghRepoItem struct {
+	FullName        string  `json:"full_name"`
+	HTMLURL         string  `json:"html_url"`
+	Description     string  `json:"description"`
+	StargazersCount int     `json:"stargazers_count"`
+	Language        *string `json:"language"`
+}
+
+func searchAndPrompt(query string) {
+	results, err := searchRepos(query, 10)
+	if err != nil {
+		fmt.Println("Search failed:", err)
+		return
+	}
+
+	if len(results) == 0 {
+		fmt.Println("No results found for:", query)
+		return
+	}
+
+	// Print results
+	for i, r := range results {
+		lang := "Unknown"
+		if r.Language != nil && *r.Language != "" {
+			lang = *r.Language
+		}
+		fmt.Printf("%d) %s  ★%d  %s\n", i+1, r.FullName, r.StargazersCount, lang)
+	}
+
+	// Prompt user
+	fmt.Print("Select a number: ")
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		fmt.Println("Failed to read input:", err)
+		return
+	}
+	input = strings.TrimSpace(input)
+	if input == "" {
+		fmt.Println("No selection made")
+		return
+	}
+	idx, err := strconv.Atoi(input)
+	if err != nil {
+		fmt.Println("Invalid selection")
+		return
+	}
+	if idx < 1 || idx > len(results) {
+		fmt.Println("Selection out of range")
+		return
+	}
+
+	chosen := results[idx-1]
+	installRepo(chosen.FullName)
+}
+
+func searchRepos(query string, perPage int) ([]ghRepoItem, error) {
+	if perPage <= 0 || perPage > 50 {
+		perPage = 10
+	}
+	url := fmt.Sprintf("https://api.github.com/search/repositories?q=%s&per_page=%d", query, perPage)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("User-Agent", "ghpm-cli")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub API returned status: %s", resp.Status)
+	}
+
+	var sr ghSearchResult
+	dec := json.NewDecoder(resp.Body)
+	if err := dec.Decode(&sr); err != nil {
+		return nil, err
+	}
+
+	return sr.Items, nil
 }
 
 func installRepo(repo string) {
