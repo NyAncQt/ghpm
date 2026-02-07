@@ -69,6 +69,45 @@ if errorlevel 1 (
     echo [OK] ghpm is working correctly!
 )
 
+:: Add ghpm directory to PowerShell profile(s) so future shells include it
+set "PS_DIR=%USERPROFILE%\Documents\PowerShell"
+set "PS_PROFILE=%PS_DIR%\Microsoft.PowerShell_profile.ps1"
+set "WPS_DIR=%USERPROFILE%\Documents\WindowsPowerShell"
+set "WPS_PROFILE=%WPS_DIR%\Microsoft.PowerShell_profile.ps1"
+
+echo.
+echo Ensuring PowerShell profiles will include ghpm path...
+
+if exist "%PS_PROFILE%" (
+    findstr /C:"# ghpm path" "%PS_PROFILE%" >nul 2>&1 || (
+        echo # ghpm path>>"%PS_PROFILE%"
+        echo $ghpm = "%USERPROFILE%\AppData\Local\ghpm" >>"%PS_PROFILE%"
+        echo if (-not ($env:Path -like "*$ghpm*")) { $env:Path = $env:Path + ";" + $ghpm } >>"%PS_PROFILE%"
+        echo [OK] Updated %PS_PROFILE%
+    )
+) else (
+    if not exist "%PS_DIR%" mkdir "%PS_DIR%"
+    echo # ghpm path>"%PS_PROFILE%"
+    echo $ghpm = "%USERPROFILE%\AppData\Local\ghpm" >>"%PS_PROFILE%"
+    echo if (-not ($env:Path -like "*$ghpm*")) { $env:Path = $env:Path + ";" + $ghpm } >>"%PS_PROFILE%"
+    echo [OK] Created and added ghpm path to %PS_PROFILE%
+)
+
+if exist "%WPS_PROFILE%" (
+    findstr /C:"# ghpm path" "%WPS_PROFILE%" >nul 2>&1 || (
+        echo # ghpm path>>"%WPS_PROFILE%"
+        echo $ghpm = "%USERPROFILE%\AppData\Local\ghpm" >>"%WPS_PROFILE%"
+        echo if (-not ($env:Path -like "*$ghpm*")) { $env:Path = $env:Path + ";" + $ghpm } >>"%WPS_PROFILE%"
+        echo [OK] Updated %WPS_PROFILE%
+    )
+) else (
+    if not exist "%WPS_DIR%" mkdir "%WPS_DIR%"
+    echo # ghpm path>"%WPS_PROFILE%"
+    echo $ghpm = "%USERPROFILE%\AppData\Local\ghpm" >>"%WPS_PROFILE%"
+    echo if (-not ($env:Path -like "*$ghpm*")) { $env:Path = $env:Path + ";" + $ghpm } >>"%WPS_PROFILE%"
+    echo [OK] Created and added ghpm path to %WPS_PROFILE%
+)
+
 echo.
 echo ==========================================
 echo Installation complete!
@@ -78,7 +117,9 @@ echo   ghpm install owner/repo    - Install from GitHub
 echo   ghpm list                  - List installed packages
 echo   ghpm remove repo-name      - Remove a package
 echo.
-echo Note: Please close and reopen your terminal for PATH changes to take effect.
+echo To refresh PATH in the current PowerShell session, run this command now:
+echo   $env:PATH += ";%INSTALL_DIR%"
+echo Or restart your terminal.
 echo ==========================================
 echo.
 pause
