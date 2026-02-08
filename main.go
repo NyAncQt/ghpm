@@ -37,7 +37,6 @@ func initDirs() error {
 	packagesDir = filepath.Join(baseDir, "packages")
 	manifestsDir = filepath.Join(baseDir, "manifests")
 
-	// Ensure base, packages and manifests directories exist
 	if err := os.MkdirAll(baseDir, 0755); err != nil {
 		return err
 	}
@@ -75,7 +74,6 @@ func main() {
 		if strings.Contains(repoArg, "/") {
 			installRepo(repoArg)
 		} else {
-			// If user provided only a name (e.g. "btop"), search GitHub and prompt
 			searchAndPrompt(repoArg)
 		}
 	case "remove":
@@ -109,7 +107,6 @@ func main() {
 	}
 }
 
-// GitHub API structs
 type ghSearchResult struct {
 	TotalCount int          `json:"total_count"`
 	Items      []ghRepoItem `json:"items"`
@@ -135,7 +132,6 @@ func searchAndPrompt(query string) {
 		return
 	}
 
-	// Print results
 	for i, r := range results {
 		lang := "Unknown"
 		if r.Language != nil && *r.Language != "" {
@@ -144,7 +140,6 @@ func searchAndPrompt(query string) {
 		fmt.Printf("%d) %s  ★%d  %s\n", i+1, r.FullName, r.StargazersCount, lang)
 	}
 
-	// Prompt user
 	fmt.Print("Select a number: ")
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
@@ -203,7 +198,6 @@ func searchRepos(query string, perPage int) ([]ghRepoItem, error) {
 	return sr.Items, nil
 }
 
-// detectLanguage tries to auto-detect the programming language of a repo
 func detectLanguage(repoPath string) string {
 	checks := []struct {
 		file string
@@ -226,7 +220,6 @@ func detectLanguage(repoPath string) string {
 		}
 	}
 
-	// Check for shell scripts
 	entries, err := os.ReadDir(repoPath)
 	if err == nil {
 		for _, e := range entries {
@@ -238,7 +231,6 @@ func detectLanguage(repoPath string) string {
 		}
 	}
 
-	// Check for Ruby gemspec
 	if matches, _ := filepath.Glob(filepath.Join(repoPath, "*.gemspec")); len(matches) > 0 {
 		return "Ruby"
 	}
@@ -305,7 +297,6 @@ func warnIfPathMissing(binDir string) {
 	fmt.Println("Warning:", binDir, "is not on your PATH. Add it to ~/.zshrc or ~/.bashrc.")
 }
 
-// autoBuildRepo attempts to build/install based on detected language
 func autoBuildRepo(repoPath, language string) (bool, string) {
 	// Check for --no-build flag
 	for _, arg := range os.Args {
@@ -433,7 +424,6 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 			return true, cmdDesc
 		}
 
-		// pip missing, try setup.py
 		cmdDesc = "python setup.py install"
 		cmd = exec.Command("python", "setup.py", "install")
 		cmd.Dir = repoPath
@@ -447,7 +437,7 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 		return true, cmdDesc
 
 	case "Ruby":
-		// Ruby projects often provide bin/ scripts; no build needed to link them
+
 		if !commandExists("ruby") {
 			fmt.Println("Ruby is not installed or not on PATH.")
 			return false, "missing ruby"
@@ -460,7 +450,7 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 			fmt.Println("sh is not available on PATH.")
 			return false, "missing sh"
 		}
-		// Find install script
+
 		installScript := ""
 		entries, _ := os.ReadDir(repoPath)
 		for _, e := range entries {
@@ -476,7 +466,6 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 
 		scriptPath := filepath.Join(repoPath, installScript)
 
-		// Make executable
 		if err := os.Chmod(scriptPath, 0755); err != nil {
 			fmt.Println("Failed to make install script executable")
 			return false, "chmod +x " + installScript
@@ -503,7 +492,6 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 			return false, "missing make/cmake"
 		}
 
-		// Try make first
 		cmdDesc = "make"
 		if hasMake {
 			_, err := os.Stat(filepath.Join(repoPath, "Makefile"))
@@ -532,7 +520,6 @@ func autoBuildRepo(repoPath, language string) (bool, string) {
 			}
 		}
 
-		// Try CMake
 		if hasCmake {
 			_, err := os.Stat(filepath.Join(repoPath, "CMakeLists.txt"))
 			if err == nil {
@@ -597,11 +584,9 @@ func installRepo(repo string) {
 		return
 	}
 
-	// Detect language and auto-build
 	language := detectLanguage(dest)
 	built, buildCmd := autoBuildRepo(dest, language)
 
-	// Save manifest
 	manifest := Manifest{
 		Name:        repoName,
 		Repo:        repo,
@@ -613,7 +598,6 @@ func installRepo(repo string) {
 	}
 	saveManifest(manifest)
 
-	// LINK BINARIES HERE
 	linkBinaries(dest, repoName, language)
 
 	fmt.Println("Installed", repoName)
@@ -623,7 +607,7 @@ func installRepo(repo string) {
 }
 
 func linkBinaries(repoPath, repoName, language string) {
-	// Where to link binaries
+
 	binDir := filepath.Join(os.Getenv("HOME"), ".local", "bin")
 	os.MkdirAll(binDir, 0755)
 	warnIfPathMissing(binDir)
@@ -639,7 +623,7 @@ func linkBinaries(repoPath, repoName, language string) {
 
 	switch language {
 	case "Go":
-		// Usually go install puts binaries in $GOPATH/bin, fallback to repoPath
+
 		gobin := os.Getenv("GOBIN")
 		if gobin == "" {
 			gobin = filepath.Join(os.Getenv("HOME"), "go", "bin")
@@ -648,7 +632,7 @@ func linkBinaries(repoPath, repoName, language string) {
 		if _, err := os.Stat(binPath); err == nil {
 			binaries = append(binaries, binPath)
 		} else {
-			// fallback to built binary in repo
+
 			binPath = filepath.Join(repoPath, repoName)
 			if _, err := os.Stat(binPath); err == nil {
 				binaries = append(binaries, binPath)
@@ -656,14 +640,14 @@ func linkBinaries(repoPath, repoName, language string) {
 		}
 
 	case "Rust":
-		// Cargo puts release binaries in target/release
+
 		binPath := filepath.Join(repoPath, "target", "release", repoName)
 		if _, err := os.Stat(binPath); err == nil {
 			binaries = append(binaries, binPath)
 		}
 
 	case "Node":
-		// Respect package.json bin entries
+
 		for _, link := range packageJSONBinLinks(repoPath) {
 			if _, err := os.Stat(link.Path); err == nil {
 				os.Chmod(link.Path, 0755)
@@ -671,7 +655,6 @@ func linkBinaries(repoPath, repoName, language string) {
 			}
 		}
 
-		// Fallback: look for scripts in repo root and bin/
 		entries, _ := os.ReadDir(repoPath)
 		for _, e := range entries {
 			if e.IsDir() {
@@ -698,7 +681,7 @@ func linkBinaries(repoPath, repoName, language string) {
 		}
 
 	case "Python":
-		// Look for scripts with the repo name or "install" in repo
+
 		entries, _ := os.ReadDir(repoPath)
 		for _, e := range entries {
 			if e.IsDir() {
@@ -712,7 +695,6 @@ func linkBinaries(repoPath, repoName, language string) {
 			}
 		}
 
-		// Also check bin/ for scripts
 		binEntries, _ := os.ReadDir(filepath.Join(repoPath, "bin"))
 		for _, e := range binEntries {
 			if e.IsDir() {
@@ -727,7 +709,7 @@ func linkBinaries(repoPath, repoName, language string) {
 		}
 
 	case "Shell":
-		// Look for scripts with the repo name or "install" in repo
+
 		entries, _ := os.ReadDir(repoPath)
 		for _, e := range entries {
 			if e.IsDir() {
@@ -741,7 +723,6 @@ func linkBinaries(repoPath, repoName, language string) {
 			}
 		}
 
-		// Also check bin/ for scripts
 		binEntries, _ := os.ReadDir(filepath.Join(repoPath, "bin"))
 		for _, e := range binEntries {
 			if e.IsDir() {
@@ -756,13 +737,13 @@ func linkBinaries(repoPath, repoName, language string) {
 		}
 
 	case "Ruby":
-		// Commonly provides bin/ scripts (e.g., bin/<name>)
+
 		binPath := filepath.Join(repoPath, "bin", repoName)
 		if _, err := os.Stat(binPath); err == nil {
 			os.Chmod(binPath, 0755)
 			binaries = append(binaries, binPath)
 		} else {
-			// Fallback: link any executable files in bin/
+
 			binEntries, _ := os.ReadDir(filepath.Join(repoPath, "bin"))
 			for _, e := range binEntries {
 				if e.IsDir() {
@@ -775,7 +756,7 @@ func linkBinaries(repoPath, repoName, language string) {
 		}
 
 	case "C/C++":
-		// Prefer common build outputs first
+
 		candidates := []string{
 			filepath.Join(repoPath, repoName),
 			filepath.Join(repoPath, "bin", repoName),
@@ -788,7 +769,6 @@ func linkBinaries(repoPath, repoName, language string) {
 			}
 		}
 
-		// Fallback: scan a few common dirs for executables
 		if len(binaries) == 0 {
 			scanDirs := []string{
 				repoPath,
@@ -810,10 +790,9 @@ func linkBinaries(repoPath, repoName, language string) {
 		}
 	}
 
-	// Link binaries to ~/.local/bin
 	for _, b := range binaries {
 		linkPath := filepath.Join(binDir, filepath.Base(b))
-		// Remove existing link if present
+
 		os.Remove(linkPath)
 		err := os.Symlink(b, linkPath)
 		if err != nil {
@@ -859,7 +838,7 @@ func listRepos() {
 		var m Manifest
 		data, _ := os.ReadFile(filepath.Join(manifestsDir, f.Name()))
 		json.Unmarshal(data, &m)
-		// Show language and build status if available
+
 		extra := ""
 		if m.Language != "" && m.Language != "Unknown" {
 			extra = fmt.Sprintf(" [%s]", m.Language)
@@ -873,7 +852,6 @@ func listRepos() {
 	}
 }
 
-// updateRepo pulls latest changes and rebuilds
 func updateRepo(name string) {
 	manifestPath := filepath.Join(manifestsDir, name+".json")
 	pkgPath := filepath.Join(packagesDir, name)
