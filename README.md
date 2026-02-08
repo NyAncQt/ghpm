@@ -62,8 +62,8 @@ Use the included Windows setup scripts (`setup.bat` or `install.ps1`) as documen
 - Installs go into `~/.ghpm/packages/`.
 - Manifest JSON files are written to `~/.ghpm/manifests/` and include fields: `name`, `repo`, `url`, `installed_at`, and optional `commit` and `version`.
 - The tool creates `~/.ghpm`, `~/.ghpm/packages`, and `~/.ghpm/manifests` automatically.
+- the tool has integrated auto build and language detect that supports c/c++ ruby rust go python etc...
 
-Note: This tool clones repositories (git). It does not build or install software contained inside the repo — it simply downloads the repository contents into a local folder.
 
 ---
 
